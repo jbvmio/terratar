@@ -19,31 +19,51 @@ import (
 )
 
 var (
-	terraFile, modPath string
+	baseDir   = getPWD()
+	terraFile = filepath.Join(baseDir, `Terratar.yml`)
+	modPath   = filepath.Dir(terraFile) + `/.vendor/modules`
+	overwrite bool
 )
 
 func main() {
 	pf := pflag.NewFlagSet(`terratar`, pflag.ExitOnError)
-	pf.StringVarP(&terraFile, "terratar-file", "f", "./Terratar.yml", "Filepath of Terratar file.")
-	pf.StringVarP(&modPath, "module-path", "p", "./vendor/modules", "Filepath where generated modules will install.")
+	pf.StringVarP(&terraFile, "terratar-file", "f", terraFile, "Filepath of Terratar file.")
+	pf.StringVarP(&modPath, "module-path", "p", modPath, "Modules install directory, Defaults to directory of Terratar config file.")
+	pf.BoolVar(&overwrite, "overwrite", false, "Overwrite if module directory already exists, otherwise ignore.")
 	pf.Parse(os.Args[1:])
+	terraFile = getAbs(terraFile)
+	if !pf.Changed("module-path") {
+		modPath = filepath.Dir(terraFile) + `/.vendor/modules`
+	}
+	modPath = getAbs(modPath)
+	if !FileExists(terraFile) {
+		log.Fatalf("[Terratar] specified config does not exist: %s\n", terraFile)
+	}
 	file, err := ioutil.ReadFile(terraFile)
 	if err != nil {
-		log.Fatalf("error reading %s: %v\n", terraFile, err)
+		log.Fatalf("[Terratar] error reading %s: %v\n", terraFile, err)
 	}
 	var TT map[string]map[string]string
 	err = yaml.Unmarshal(file, &TT)
 	if err != nil {
-		log.Fatalf("error processing %s: %v\n", terraFile, err)
+		log.Fatalf("[Terratar] error processing %s: %v\n", terraFile, err)
 	}
 	for modName, tarParams := range TT {
 		var useURL, tarFile string
 		var ok bool
+		target := modPath + `/` + modName
+		switch {
+		case overwrite:
+			log.Printf("[Terratar] Overriding existing Module at %s\n", target)
+		case FileExists(target):
+			log.Printf("[Terratar] Module already exists at %s, skipping...\n", target)
+			continue
+		}
 		if useURL, ok = tarParams[`source`]; !ok {
 			log.Fatalf("invalid source for %s\n", modName)
 		}
 		if tarFile, ok = tarParams[`version`]; !ok {
-			log.Fatalf("invalid version for %s\n", modName)
+			log.Fatalf("[Terratar] invalid version for %s\n", modName)
 		}
 		tarFile = strings.TrimSuffix(tarFile, `.tar.gz`)
 		tarFile = tarFile + `.tar.gz`
@@ -52,15 +72,14 @@ func main() {
 		log.Printf("[Terratar] Downloading: %s\n", URL.String())
 		resp, err := http.Get(URL.String())
 		if err != nil {
-			log.Printf("error retrieving tarball: %v\n", err)
-			return
+			log.Printf("[Terratar] error retrieving tarball from %s: %v\n", target, err)
+			continue
 		}
 		defer resp.Body.Close()
-		target := modPath + `/` + modName
 		err = Untar(target, resp.Body)
 		if err != nil {
-			log.Printf("error processing tarball: %v\n", err)
-			return
+			log.Printf("[Terratar] error processing tarball from %s: %v\n", target, err)
+			continue
 		}
 	}
 }
@@ -71,8 +90,9 @@ func Untar(dst string, r io.Reader) error {
 	gzr, err := gzip.NewReader(r)
 	if err != nil {
 		if err == io.EOF {
-			err = fmt.Errorf("tarball not found or empty")
+			err = fmt.Errorf("[Terratar] tarball not found or empty")
 		}
+		log.Printf("[Terratar] invalid tarball for module: %s\n", dst)
 		return err
 	}
 	defer gzr.Close()
@@ -107,4 +127,28 @@ func Untar(dst string, r io.Reader) error {
 			f.Close()
 		}
 	}
+}
+
+func getPWD() string {
+	d, err := os.Getwd()
+	if err != nil {
+		log.Printf("[Terratar] Error retrieving working directory: %v\n", err)
+	}
+	return d
+}
+
+func getAbs(path string) string {
+	d, err := filepath.Abs(path)
+	if err != nil {
+		log.Printf("[Terratar] Error validating %s: %v\n", path, err)
+	}
+	return d
+}
+
+// FileExists checks for the existence of the file indicated by filename and returns true if it exists.
+func FileExists(filename string) bool {
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		return false
+	}
+	return true
 }
