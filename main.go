@@ -43,15 +43,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("[Terratar] error reading %s: %v\n", terraFile, err)
 	}
-	var TT map[string]map[string]string
+	var TT []source
 	err = yaml.Unmarshal(file, &TT)
 	if err != nil {
 		log.Fatalf("[Terratar] error processing %s: %v\n", terraFile, err)
 	}
-	for modName, tarParams := range TT {
-		var useURL, tarFile string
-		var ok bool
-		target := modPath + `/` + modName
+	for _, src := range TT {
+		tarFile := src.Version
+		target := modPath + `/` + src.Name
 		switch {
 		case overwrite:
 			log.Printf("[Terratar] Overriding existing Module at %s\n", target)
@@ -59,15 +58,15 @@ func main() {
 			log.Printf("[Terratar] Module already exists at %s, skipping...\n", target)
 			continue
 		}
-		if useURL, ok = tarParams[`source`]; !ok {
-			log.Fatalf("invalid source for %s\n", modName)
-		}
-		if tarFile, ok = tarParams[`version`]; !ok {
-			log.Fatalf("[Terratar] invalid version for %s\n", modName)
+		switch {
+		case src.Source == "":
+			log.Fatalf("[Terratar] invalid source for %s\n", src.Name)
+		case tarFile == "":
+			log.Fatalf("[Terratar] invalid version for %s\n", src.Name)
 		}
 		tarFile = strings.TrimSuffix(tarFile, `.tar.gz`)
 		tarFile = tarFile + `.tar.gz`
-		URL, _ := url.Parse(useURL)
+		URL, _ := url.Parse(src.Source)
 		URL.Path = path.Join(URL.Path, tarFile)
 		log.Printf("[Terratar] Downloading: %s\n", URL.String())
 		resp, err := http.Get(URL.String())
@@ -151,4 +150,10 @@ func FileExists(filename string) bool {
 		return false
 	}
 	return true
+}
+
+type source struct {
+	Name    string `yaml:"name" json:"name"`
+	Source  string `yaml:"source" json:"source"`
+	Version string `yaml:"version" json:"version"`
 }
